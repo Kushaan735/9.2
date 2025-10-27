@@ -1,0 +1,93 @@
+name: CI/CD Pipeline
+
+# 1. TRIGGER: Define what events start this workflow
+# The workflow will run every time code is pushed to the 'main' branch
+on:
+  push:
+    branches:
+      - main
+  # Allow manual runs from the GitHub Actions tab
+  workflow_dispatch:
+
+# Define environment variables used throughout the workflow
+env:
+  NODE_VERSION: '20.x'
+  # Set the build directory output from the React app
+  BUILD_DIR: 'build'
+  
+# A workflow is composed of one or more jobs
+jobs:
+  # --- JOB 1: Test & Build (Continuous Integration) ---
+  build_and_test:
+    name: Build & Test Application
+    # Specify the runner environment (GitHub-hosted virtual machine)
+    runs-on: ubuntu-latest
+
+    steps:
+      # Step 1: Checkout the source code from the repository
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # Step 2: Set up the correct Node.js environment
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm' # Cache npm dependencies for faster runs
+
+      # Step 3: Install all project dependencies
+      - name: Install Dependencies
+        run: npm install
+
+      # Step 4: Run automated tests (e.g., Jest, Cypress)
+      # This step must pass for the workflow to continue to deployment
+      - name: Run Tests
+        # Assuming you have a test script defined in package.json (e.g., "test": "jest")
+        run: npm test -- --coverage # Use --coverage to show coverage stats
+
+      # Step 5: Build the React application for production
+      - name: Build React App
+        # Assuming your build script outputs to the directory specified in BUILD_DIR (e.g., 'build')
+        run: npm run build
+
+      # Step 6: Store the compiled static artifacts for the next deployment job
+      # This makes the 'build' folder available to subsequent jobs
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-app-build
+          path: ${{ env.BUILD_DIR }}
+
+  # --- JOB 2: Deployment (Continuous Deployment) ---
+  deploy:
+    name: Deploy to Production
+    # This job only runs if the 'build_and_test' job completed successfully
+    needs: build_and_test
+    runs-on: ubuntu-latest
+    
+    # Deployment should only happen on pushes to the main branch
+    if: github.ref == 'refs/heads/main' 
+
+    steps:
+      # Step 1: Download the static files created in the 'build_and_test' job
+      - name: Download Build Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: web-app-build
+          path: ${{ env.BUILD_DIR }}
+
+      # Step 2: Deploy the files using SSH/SFTP (a common deployment method)
+      # This uses secrets stored in your GitHub repository settings for security
+      - name: Deploy via SFTP
+        uses: wlix/action-sftp@v2.0.0
+        with:
+          host: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          # The remote path where your web server serves files from
+          remote_path: '/var/www/my-app/' 
+          # The local path to the artifact we downloaded
+          local_path: ${{ env.BUILD_DIR }}/*
+          
+      - name: Deployment Success Notification
+        run: echo "Deployment of build artifacts completed successfully."
